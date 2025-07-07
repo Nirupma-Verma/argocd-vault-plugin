@@ -29,6 +29,7 @@ import (
 	ycsdk "github.com/yandex-cloud/go-sdk"
 	"github.com/yandex-cloud/go-sdk/iamkey"
 	sops "go.mozilla.org/sops/v3/decrypt"
+	"github.com/cyberark/conjur-api-go/conjurapi"
 )
 
 // Options options that can be passed to a Config struct
@@ -282,6 +283,29 @@ func New(v *viper.Viper, co *Options) (*Config, error) {
 	case types.KubernetesSecretBackend:
 		{
 			backend = backends.NewKubernetesSecret()
+		}
+	case types.CyberArkSecretsManagerBackend:
+		{
+			if !v.IsSet(types.EnvAvpSecretsManagerURL) ||
+			   !v.IsSet(types.EnvAvpSecretsManagerAccount) ||
+			   !v.IsSet(types.EnvAvpSecretsManagerSSLCert) ||
+			   !v.IsSet(types.EnvAvpSecretsManagerTokenFile) {
+				return nil, fmt.Errorf("%s, %s, %s and %s are required for Cyberark Secrets Manager authn-k8s or authn-jwt authentication",
+					types.EnvAvpSecretsManagerURL,
+					types.EnvAvpSecretsManagerAccount,
+					types.EnvAvpSecretsManagerSSLCert,
+					types.EnvAvpSecretsManagerTokenFile,
+				)
+			}
+			var config conjurapi.Config
+			config.ApplianceURL = v.GetString(types.EnvAvpSecretsManagerURL)
+			config.Account = v.GetString(types.EnvAvpSecretsManagerAccount)
+			config.SSLCert = v.GetString(types.EnvAvpSecretsManagerSSLCert)
+			secretsmanager, err := conjurapi.NewClientFromTokenFile(config, v.GetString(types.EnvAvpSecretsManagerTokenFile))
+			if err != nil {
+				return nil, err
+			}
+			backend = backends.NewCyberArkSecretsManagerBackend(secretsmanager)
 		}
 	default:
 		return nil, fmt.Errorf("Must provide a supported Vault Type, received %s", v.GetString(types.EnvAvpType))

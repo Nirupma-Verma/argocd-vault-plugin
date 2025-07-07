@@ -1,10 +1,4 @@
-FROM index.docker.io/golang:1.22.7
-
-ADD go.mod go.mod
-ADD go.sum go.sum
-
-ENV GOPATH=""
-RUN go mod download
-
-VOLUME work
-WORKDIR work
+FROM alpine
+RUN apk add --no-cache kubectl kustomize helm
+COPY argocd-vault-plugin /usr/local/bin/argocd-vault-plugin
+RUN chmod +x /usr/local/bin/argocd-vault-plugin
