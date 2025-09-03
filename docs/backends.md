@@ -808,3 +808,228 @@ type: Opaque
 data:
   password: <path:prod:my-secret#key>
 ```
+
+### CyberArk Secrets Manager
+
+##### 1. Set up Conjur 
+
+##### Certificate-based Kubernetes Authentication
+
+```
+helm install cluster-prep cyberark/conjur-config-cluster-prep \
+  --namespace cyberark-conjur \
+  --create-namespace \
+  --set conjur.account=default \
+  --set conjur.applianceUrl="https://conjur-conjur-oss.${CONJUR_NAMESPACE}.svc.cluster.local" \
+  --set conjur.certificateBase64=$(cat /Users/nirupma.verma/Downloads/ArgoCD/conjur.pem | base64 -w 0) \
+  --set authnK8s.authenticatorID="conjur-lab" \
+  --set authnK8s.serviceAccountname="authn-k8s-sa" \
+  --set authnK8s.clusterRolename="conjur-authn-role"
+```
+
+```
+helm install namespace-prep cyberark/conjur-config-namespace-prep \
+  --namespace argocd \
+  --set authnK8s.goldenConfigMap="conjur-configmap" \
+  --set authnK8s.namespace="cyberark-conjur"
+```
+
+- [Conjur OSS] (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-k8s-authn.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CSet%20up%20Kubernetes%20authentication%7CCertificate-based%20Kubernetes%20authentication%7C_____0)
+
+ - [Conjur Enterprise] ()
+
+##### 2. Workload identity for Kubernetes
+
+ - [Conjur OSS] (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-app-identity.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CSet%20up%20Kubernetes%20authentication%7CCertificate-based%20Kubernetes%20authentication%7C_____1)
+ 
+ - [Conjur Enterprise] ()
+
+##### 3. Kubernetes Authenticator Client
+
+Patch the argocd-repo-server with Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client) as a init container or sidecar for authentication with Conjur and writing the Conjur access token to shared volume. AVP(ArgoCD Vault Plugin) container reads the shared access token to fetch secrets from Conjur.
+
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: authenticator
+          image: cyberark/conjur-authn-k8s-client
+          imagePullPolicy: Always
+          env:
+            - name: CONJUR_AUTHN_LOGIN
+              value: host/argocd-repo-server
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          envFrom:
+            - configMapRef:
+                name: conjur-connect
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: conjur-access-token
+              mountPath: /run/conjur
+
+        - name: avp
+          command:
+            - /var/run/argocd/argocd-cmp-server
+          image: nirupmav/nirupmav_avp:1.0.4
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: vault-configuration
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: var-files
+              mountPath: /var/run/argocd
+            - name: plugins
+              mountPath: /home/argocd/cmp-server/plugins
+            - name: tmp
+              mountPath: /tmp
+            - name: cmp-plugin
+              mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              subPath: avp.yaml
+            - name: conjur-access-token
+              mountPath: /run/conjur
+
+        - name: argocd-repo-server
+          image: quay.io/argoproj/argocd:v3.0.6
+          imagePullPolicy: Always
+          args:
+            - /usr/local/bin/argocd-repo-server
+          volumeMounts:
+            - name: argocd-repo-server-secret
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+
+      volumes:
+        - emptyDir:
+            medium: Memory
+          name: conjur-access-token
+        - configMap:
+            defaultMode: 420
+            name: cmp-plugin
+          name: cmp-plugin
+        - name: argocd-repo-server-secret
+          secret:
+            defaultMode: 511
+            optional: true
+            secretName: argocd-repo-server-secret
+```
+
+##### JWT Authentication
+
+##### Install the cluster prep Golden ConfigMap
+
+```
+helm install "cluster-prep" cyberark/conjur-config-cluster-prep \
+  -n "cyberark-conjur-jwt" \
+  --create-namespace \
+  --set conjur.account="default" \
+  --set conjur.applianceUrl="https://conjur-conjur-oss.${CONJUR_NAMESPACE}.svc.cluster.local" \
+  --set conjur.certificateBase64=$(cat /Users/nirupma.verma/Downloads/ArgoCD/conjur.pem | base64 -w 0) \
+  --set authnK8s.authenticatorID="dev-cluster" \
+  --set authnK8s.clusterRole.create=false \
+  --set authnK8s.serviceAccount.create=false
+
+The following have been deployed:
+- Golden ConfigMap :  "conjur-configmap"
+
+Helm command to prepare the application namespace
+
+helm install namespace-prep cyberark/conjur-config-namespace-prep \
+--namespace argocd \
+--set conjurConfigMap.authnMethod="authn-jwt" \
+--set authnK8s.goldenConfigMap="conjur-configmap" \
+--set authnK8s.namespace="cyberark-conjur-jwt" \
+--set authnRoleBinding.create="false"
+
+The following have been deployed:
+- Conjur Connection Configmap :  "conjur-connect"
+```
+
+##### Patch argocd repo server 
+
+```yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: authenticator
+          image: cyberark/conjur-authn-k8s-client
+          imagePullPolicy: Always
+          env:
+            - name: JWT_TOKEN_PATH
+              value: /var/run/secrets/tokens/token           
+          envFrom:
+            - configMapRef:
+                name: conjur-connect
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: conjur-access-token
+              mountPath: /run/conjur
+            - name: argocd-repo-server-secret
+      	       mountPath: /var/run/secrets/tokens
+               readOnly: true
+
+        - name: avp
+          command:
+            - /var/run/argocd/argocd-cmp-server
+          image: nirupmav/nirupmav_avp:1.0.4
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: vault-configuration
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: var-files
+              mountPath: /var/run/argocd
+            - name: plugins
+              mountPath: /home/argocd/cmp-server/plugins
+            - name: tmp
+              mountPath: /tmp
+            - name: cmp-plugin
+              mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              subPath: avp.yaml
+            - name: conjur-access-token
+              mountPath: /run/conjur
+
+        - name: argocd-repo-server
+          image: quay.io/argoproj/argocd:v3.0.6
+          imagePullPolicy: Always
+          args:
+            - /usr/local/bin/argocd-repo-server
+          volumeMounts:
+            - name: argocd-repo-server-secret
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+
+      volumes:
+        - emptyDir:
+            medium: Memory
+          name: conjur-access-token
+       - name: argocd-repo-server-secret
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 6000
+                  audience: https://conjur-conjur-oss.conjur.svc.cluster.local
+        - configMap:
+            defaultMode: 420
+            name: cmp-plugin
+          name: cmp-plugin
+```
