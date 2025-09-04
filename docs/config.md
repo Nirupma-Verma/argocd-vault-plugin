@@ -73,11 +73,11 @@ We also support these AVP specific variables:
 
 | Name                       | Description                                         | Notes                                                                                                                                                                        |
 | -------------------------- |-----------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| AVP_TYPE                   | The type of Vault backend                           | Supported values: `vault`, `ibmsecretsmanager`, `awssecretsmanager`, `gcpsecretmanager`, `yandexcloudlockbox` and `1passwordconnect`                                         |
+| AVP_TYPE                   | The type of Vault backend                           | Supported values: `vault`, `ibmsecretsmanager`, `awssecretsmanager`, `gcpsecretmanager`, `yandexcloudlockbox`, `1passwordconnect` and     `cyberarksecretsmanager`                                        |
 | AVP_KV_VERSION             | The vault secret engine                             | Supported values: `1` and `2` (defaults to 2). KV_VERSION will be ignored if the `avp.kubernetes.io/kv-version` annotation is present in a YAML resource.                    |
 | AVP_AUTH_TYPE              | The type of authentication                          | Supported values: vault: `approle, github, k8s, token`. Only honored for `AVP_TYPE` of `vault`                                                                               |
 | AVP_GITHUB_TOKEN           | Github token                                        | Required with `AUTH_TYPE` of `github`                                                                                                                                        |
-| AVP_ROLE_ID                | Vault AppRole Role_ID                               | Required with `AUTH_TYPE` of `approle`                                                                                                                                       |
+| AVP_ROLE_ID                | Vault AppRole Role_ID                               | Required with `AUTH_TYPE` of `approle`                                                                                                                                        |
 | AVP_SECRET_ID              | Vault AppRole Secret_ID                             | Required with `AUTH_TYPE` of `approle`                                                                                                                                       |
 | AVP_MOUNT_PATH             | Vault Auth Mount PATH                               | Optional. Defaults to the appropriate path based on `AUTH_TYPE` (i.e, `auth/approle` for AppRole authentication, `auth/github` for Github, `auth/kubernetes` for Kubernetes) |
 | AVP_K8S_MOUNT_PATH         | Kuberentes Auth Mount PATH                          | Optional for `AUTH_TYPE` of `k8s` defaults to `auth/kubernetes`. Takes precedence over `$AVP_MOUNT_PATH`                                                                     |
@@ -90,6 +90,10 @@ We also support these AVP specific variables:
 | AVP_YCL_KEY_ID             | Yandex Cloud Lockbox service account Key ID         | Required with `TYPE` of `yandexcloudlockbox`                                                                                                                                 |
 | AVP_YCL_PRIVATE_KEY        | Yandex Cloud Lockbox service account private key    | Required with `TYPE` of `yandexcloudlockbox`                                                                                                                                 |
 | AVP_PATH_VALIDATION        | Regular Expression to validate the Vault path       | Optional. Can be used for e.g. to prevent path traversals.                                                                                                                   |
+| AVP_SECRETS_MANAGER_URL           | The base URL of the CyberArk Secrets Manager (Conjur)    | Required for `AVP_TYPE=cyberarksecretsmanager`. **Example:** `https://conjur.mycompany.com`           |
+| AVP_SECRETS_MANAGER_ACCOUNT       | The Conjur account name                                  | Required for `AVP_TYPE=cyberarksecretsmanager`. **Example:** `myorg`                                   |
+| AVP_SECRETS_MANAGER_SSL_CERT      | Path to the SSL certificate file for Conjur TLS          | Required for `AVP_TYPE=cyberarksecretsmanager`. **Example:** `certs/conjur.pem` |
+| AVP_SECRETS_MANAGER_TOKEN_FILE    | Path to the Conjur access token file                     | Required for `JWT` or `Kubernetes Authenticator` integration. **Example:**  `/run/conjur/access-token`  |
 
 ### Full List of Supported Annotation
 
