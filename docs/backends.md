@@ -811,42 +811,90 @@ data:
 
 ### CyberArk Secrets Manager
 
-##### 1. Set up Conjur 
+##### Set up Conjur 
+
+###### Refer to CyberArk official doc for Conjur OSS (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s_int-setup.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7C_____2) and Conjur Enterprise (https://docs.cyberark.com/conjur-enterprise/latest/en/content/deployment/dap/dap-deploy-docker-lp.htm?tocpath=Setup%7CSet%20up%20Conjur%20Enterprise%20(Docker%252FPodman)%7C_____0)
 
 ##### Certificate-based Kubernetes Authentication
+Enables Kubernetes workloads to securely authenticate with CyberArk Secrets Manager using mutual TLS (mTLS). This approach enhances security by using X.509 certificates issued and validated through trusted identity providers.
+*** Note: Certificate-based Kubernetes Authentication not supported by Conjur Cloud
+
+###### 1. Configure and Enable Kubernetes Authenticator
+
+In this step, create the following Kubernetes resources for the Kubernetes Authenticator inside your Kubernetes cluster:
+
+- A namespace, called cyberark-conjur
+- A service account for the Kubernetes Authenticator, authn-k8s-sa
+- A cluster role with the necessary RBAC permissions, conjur-clusterrole
+- A Golden ConfigMap, conjur-configmap, containing Conjur connection and configuration information
+
+collect the following information: 
+
+| Parameter                   | Description                                                                                     |
+|-----------------------------|-------------------------------------------------------------------------------------------------|
+| **Conjur account**          | The account name used when deploying Conjur. **Example:** `myorg`                             |
+| **Conjur URL**              | The Conjur URL.                                                                               |
+| **Conjur certificate file** | The path to the Conjur certificate file. The path can be full or relative.<br>For Helm, this must be a relative path starting from the Helm chart directory.<br>**Example:** `path/to/conjur.pem` |
+| **Kubernetes Authenticator service ID** | The service ID that will be used for Kubernetes Authenticator.<br>**Example:** `dev-cluster` |
 
 ```
+helm repo add cyberark https://cyberark.github.io/helm-charts
+
 helm install cluster-prep cyberark/conjur-config-cluster-prep \
   --namespace cyberark-conjur \
   --create-namespace \
   --set conjur.account=default \
   --set conjur.applianceUrl="https://conjur-conjur-oss.${CONJUR_NAMESPACE}.svc.cluster.local" \
-  --set conjur.certificateBase64=$(cat /Users/nirupma.verma/Downloads/ArgoCD/conjur.pem | base64 -w 0) \
+  --set conjur.certificateBase64=$(cat path/conjur.pem | base64 -w 0) \
   --set authnK8s.authenticatorID="conjur-lab" \
   --set authnK8s.serviceAccountname="authn-k8s-sa" \
   --set authnK8s.clusterRolename="conjur-authn-role"
 ```
 
+##### 2. Upload Policies and Enable Authentication 
+Refer to CyberArk docs (https://docs.cyberark.com/conjur-enterprise/latest/en/content/integrations/k8s-ocp/k8s-k8s-authn.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CAuthenticate%20OpenShift%252FKubernetes%7C_____3)
+
+##### 3. Workload identity for Kubernetes
+Refer to CyberArk docs (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-app-identity.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CAuthenticate%20OpenShift%252FKubernetes%7CWorkload%20identity%20in%20Kubernetes%7C_____2) and
+(https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/cjr-k8s-authn-client-authk8s.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CApp%20owner%253A%20Set%20up%20workloads%20in%20Kubernetes%7CSet%20up%20workloads%20(cert-based%20authn)%7C_____1)
+ 
+##### 4. Kubernetes Authenticator Client
+
+##### 4.1 Create Config Map for Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client)
+** Note use the goldenConfigMap name and namespace created in step 1
 ```
 helm install namespace-prep cyberark/conjur-config-namespace-prep \
   --namespace argocd \
   --set authnK8s.goldenConfigMap="conjur-configmap" \
   --set authnK8s.namespace="cyberark-conjur"
 ```
+The following have been deployed:
+- Conjur Connection Configmap :  "conjur-connect"
 
-- [Conjur OSS] (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-k8s-authn.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CSet%20up%20Kubernetes%20authentication%7CCertificate-based%20Kubernetes%20authentication%7C_____0)
+##### 4.2 Create configmap for AVP plugin in argocd namespace
 
- - [Conjur Enterprise] ()
+kubectl create configmap vault-configuration \
+  --from-literal=AVP_SECRETS_MANAGER_ACCOUNT=myorg \
+  --from-literal=AVP_SECRETS_MANAGER_URL=<conjur_url> \
+  --from-literal=AVP_TYPE=cyberarksecretsmanager \
+  --from-literal=AVP_SECRETS_MANAGER_TOKEN_FILE=/run/conjur/access-token \
+  --from-file=AVP_SECRETS_MANAGER_SSL_CERT=path/conjur.pem 
 
-##### 2. Workload identity for Kubernetes
+##### 4.3 Patch argocd-repo-server
+Patch the argocd-repo-server Deployment to integrate with CyberArk Conjur using the Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client) as a sidecar container. The authenticator uses the Pod’s name, namespace, and CONJUR_AUTHN_LOGIN identity (e.g., host/argocd-repo-server) to authenticate with Conjur and writes the Conjur access token to a shared in-memory volume (emptyDir with medium: Memory).
 
- - [Conjur OSS] (https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-app-identity.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CSet%20up%20Kubernetes%20authentication%7CCertificate-based%20Kubernetes%20authentication%7C_____1)
- 
- - [Conjur Enterprise] ()
+Key configurations for the authenticator container:
 
-##### 3. Kubernetes Authenticator Client
+- Environment variables:
+  - CONJUR_AUTHN_LOGIN: Host identity for authentication (e.g., host/argocd-repo-server).
+  - MY_POD_NAME and MY_POD_NAMESPACE: Populated dynamically using Kubernetes fieldRef for Pod name and namespace.
+- Additional settings from ConfigMap conjur-connect via envFrom.
+- Volume mount at /run/conjur for storing the Conjur access token.
 
-Patch the argocd-repo-server with Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client) as a init container or sidecar for authentication with Conjur and writing the Conjur access token to shared volume. AVP(ArgoCD Vault Plugin) container reads the shared access token to fetch secrets from Conjur.
+The AVP (ArgoCD Vault Plugin) container:
+- Reads the Conjur access token from the shared memory volume (/run/conjur).
+- Uses ConfigMap vault-configuration for Vault/Conjur integration.
+- Mounts the plugin configuration file (cmp-plugin) and other required directories.
 
 ```yaml
 spec:
@@ -875,11 +923,10 @@ spec:
           volumeMounts:
             - name: conjur-access-token
               mountPath: /run/conjur
-
         - name: avp
           command:
             - /var/run/argocd/argocd-cmp-server
-          image: nirupmav/nirupmav_avp:1.0.4
+          image: registry.access.redhat.com/ubi8
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
@@ -901,7 +948,6 @@ spec:
               subPath: avp.yaml
             - name: conjur-access-token
               mountPath: /run/conjur
-
         - name: argocd-repo-server
           image: quay.io/argoproj/argocd:v3.0.6
           imagePullPolicy: Always
@@ -910,7 +956,6 @@ spec:
           volumeMounts:
             - name: argocd-repo-server-secret
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
-
       volumes:
         - emptyDir:
             medium: Memory
@@ -927,35 +972,79 @@ spec:
 ```
 
 ##### JWT Authentication
+The authn-jwt method with a Kubernetes service account uses a short-lived JWT issued by the Kubernetes API server, mounted as a projected volume. Its default TTL is 1 hour (3600 seconds), configurable via expirationSeconds but limited to 1 hour. Kubernetes automatically rotates tokens before expiration to ensure continuous authentication (https://docs.cyberark.com/conjur-enterprise/latest/en/content/integrations/k8s-ocp/k8s-jwt-authn.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CAuthenticate%20OpenShift%252FKubernetes%7C_____2).
 
-##### Install the cluster prep Golden ConfigMap
+###### 1. Configure and Enable Kubernetes Authenticator
+
+In this step, create the following Kubernetes resources for the Kubernetes Authenticator inside your Kubernetes cluster:
+
+- A namespace, called cyberark-conjur
+- A Golden ConfigMap, conjur-configmap, containing Conjur connection and configuration information
+
+collect the following information: 
+
+| Parameter                   | Description                                                                                     |
+|-----------------------------|-------------------------------------------------------------------------------------------------|
+| **Conjur account**          | The account name used when deploying Conjur. **Example:** `myorg`                             |
+| **Conjur URL**              | The Conjur URL.                                                                               |
+| **Conjur certificate file** | The path to the Conjur certificate file. The path can be full or relative.<br>For Helm, this must be a relative path starting from the Helm chart directory.<br>**Example:** `path/to/conjur.pem` |
+| **Kubernetes Authenticator service ID** | The service ID that will be used for Kubernetes Authenticator.<br>**Example:** `dev-cluster` |
 
 ```
 helm install "cluster-prep" cyberark/conjur-config-cluster-prep \
   -n "cyberark-conjur-jwt" \
   --create-namespace \
   --set conjur.account="default" \
-  --set conjur.applianceUrl="https://conjur-conjur-oss.${CONJUR_NAMESPACE}.svc.cluster.local" \
-  --set conjur.certificateBase64=$(cat /Users/nirupma.verma/Downloads/ArgoCD/conjur.pem | base64 -w 0) \
+  --set conjur.applianceUrl=<conjur_url> \
+  --set conjur.certificateBase64=$(cat path/conjur.pem | base64 -w 0) \
   --set authnK8s.authenticatorID="dev-cluster" \
   --set authnK8s.clusterRole.create=false \
   --set authnK8s.serviceAccount.create=false
-
 The following have been deployed:
 - Golden ConfigMap :  "conjur-configmap"
+```
 
+##### 2. Upload Policies and Enable Authentication 
+Refer to CyberArk docs(https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/k8s-jwt-authn.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CAuthenticate%20OpenShift%252FKubernetes%7C_____2)
+
+##### 3. Workload identity for Kubernetes
+Refer to CyberArk docs(https://docs.cyberark.com/conjur-open-source/latest/en/content/integrations/k8s-ocp/cjr-k8s-authn-client-authjwt.htm?tocpath=Integrations%7COpenShift%252FKubernetes%7CApp%20owner%253A%20Set%20up%20workloads%20in%20Kubernetes%7CSet%20up%20workloads%20(JWT-based%20authn)%7C_____1) 
+
+##### 4. Kubernetes Authenticator Client
+
+##### 4.1 Create Config Map for Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client)
+** Note use the goldenConfigMap name and namespace created in step 1
+
+```
 Helm command to prepare the application namespace
-
 helm install namespace-prep cyberark/conjur-config-namespace-prep \
 --namespace argocd \
 --set conjurConfigMap.authnMethod="authn-jwt" \
 --set authnK8s.goldenConfigMap="conjur-configmap" \
 --set authnK8s.namespace="cyberark-conjur-jwt" \
 --set authnRoleBinding.create="false"
-
 The following have been deployed:
 - Conjur Connection Configmap :  "conjur-connect"
 ```
+
+##### 4.2 Create configmap for AVP plugin in argocd namespace
+kubectl create configmap vault-configuration \
+  --from-literal=AVP_SECRETS_MANAGER_ACCOUNT=myorg \
+  --from-literal=AVP_SECRETS_MANAGER_URL=<conjur_url> \
+  --from-literal=AVP_TYPE=cyberarksecretsmanager \
+  --from-literal=AVP_SECRETS_MANAGER_TOKEN_FILE=/run/conjur/access-token \
+  --from-file=AVP_SECRETS_MANAGER_SSL_CERT=path/conjur.pem 
+
+##### 4.3 Patch argocd-repo-server
+Patch the argocd-repo-server Deployment to enable Conjur integration using Kubernetes Authenticator Client (cyberark/conjur-authn-k8s-client) as a sidecar container for authentication. The authenticator uses a JWT token (from the projected service account token) to authenticate with Conjur and writes the Conjur access token to a shared in-memory volume (emptyDir with medium: Memory).
+
+The authenticator container is configured with:
+
+- JWT token path: /var/run/secrets/tokens/token (mounted from argocd-repo-server-secret projected service account token).
+- Environment variables via env and envFrom from ConfigMap conjur-connect.
+- A volume mount to /run/conjur for storing the Conjur access token.
+
+The AVP (ArgoCD Vault Plugin) container reads the Conjur access token from the shared memory volume (/run/conjur) and uses ConfigMap vault-configuration for its settings to fetch secrets from Conjur.
 
 ##### Patch argocd repo server 
 
@@ -985,7 +1074,7 @@ spec:
         - name: avp
           command:
             - /var/run/argocd/argocd-cmp-server
-          image: nirupmav/nirupmav_avp:1.0.4
+          image: registry.access.redhat.com/ubi8
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
